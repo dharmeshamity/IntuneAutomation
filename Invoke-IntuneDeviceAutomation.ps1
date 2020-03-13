@@ -37,90 +37,143 @@ begin{
     . ".$($path_sep)Invoke-IntuneDeviceAutomationFunctions.ps1"
 }
 process {
+    $runid = Get-Date -Format "yyyyMMdd-HHmmss.ffff"
+    Write-Host "Run Identifier for this execution: $runid"
+    $logFile = "$([System.Environment]::GetFolderPath('LocalApplicationData'))$($path_sep)IntuneAutomation$($path_sep)$($runid).log"
+    Write-Host "All Logs displayed will be also be written to the below transcription path as specified below"
+    Start-Transcript -UseMinimalHeader -Path $logFile
+
     try{
         Write-Host "Begin"
-        $appsettings = Initialize-IAAppSettings -Environment $Environment -path_seperator $path_sep -AppSettingsOverrides $AppSettingsOverrides
 
-        If(-not (Test-Path($appsettings.SourceCSVFilePath)))
-        {
-            Write-Error "Source File not found or cannot access"
-            return
-        }
+        $appsettings = Initialize-IAAppSettings -Environment $Environment -path_seperator $path_sep -AppSettingsOverrides $AppSettingsOverrides
 
         if(-not (Test-Path($appsettings.ResultFolderPath))) {
             Write-Warning "Result path is not found. Trying to create.."
             New-Item -Path $appsettings.ResultFolderPath -ItemType Directory
             Write-Host "Created Result Path"
         }
-
-        $auth_token = Get-IAAuthenticationToken -MSGraphAuthenticationEndpoint $appsettings.MSGraphApiAuthenticationEndpoint -MSGraphClientId $appsettings.MSGraphApiClientId -MSGraphAPICredential $MSGraphAPICredential
-        If([string]::IsNullOrEmpty($auth_token)) 
-        {
-            throw "Auth Token is empty or null. Cannot proceed further"
+        
+        if (-not (Test-Path($appsettings.ArchiveFolderPath))) {
+            Write-Warning "Archive Path is not found. Trying to create archive folder"
+            New-Item -Path $appsettings.ArchiveFolderPath -ItemType Directory
+            Write-Host "Created Archive Path"
         }
-        Write-Host "Successfully received auth token"
 
-        $devices = Import-csv -Delimiter $appsettings.SourceCSVDemiliter -Path $appsettings.SourceCSVFilePath
-        $results = New-Object -TypeName "System.Collections.ArrayList"
-        ForEach ($device in $devices) 
+        If(-not (Test-Path($appsettings.SourceFolderPath)))
         {
-            $device_info = Get-IAManagedDeviceInfo -MSGraphDeviceManagementEndpoint $appsettings.MSGraphApiIntuneDeviceManagementEndpoint -MSGraphAuthToken $auth_token -MSGraphDeviceId $device."Device ID"
-            if($device_info) 
+            Throw "Source Folder not found or cannot access. Cannot continue"
+        }
+
+        $source_files = Get-ChildItem -Path "$($appsettings.SourceFolderPath)" -Include "*$($appsettings.SourceFileExtention)" -Recurse  -File
+        $filesCount = ($source_files | Measure-Object).Count
+        If($filesCount -eq 0)
+        {
+            Write-Host "No Source files found. Nothing to do.."
+            Return
+        }
+        $index = 0
+        $auth_token = $null
+        
+        ForEach ($source_file in $source_files)
+        {
+            if([string]::IsNullOrEmpty($auth_token))
             {
-                $owner_type = $device_info.managedDeviceOwnerType
-                Write-Host "Managed Owner Type: $($owner_type)"
-                $result_value = "";
-                If(-not [string]::Equals($owner_type, $newOwnerType, [System.StringComparison]::InvariantCultureIgnoreCase)) 
+                $auth_token = Get-IAAuthenticationToken -MSGraphAuthenticationEndpoint $appsettings.MSGraphApiAuthenticationEndpoint -MSGraphClientId $appsettings.MSGraphApiClientId -MSGraphAPICredential $MSGraphAPICredential
+            }
+            If([string]::IsNullOrEmpty($auth_token)) 
+            {
+                Throw "Authentication to MS Graph API failed. Cannot continue"
+            }
+            Write-Information "Successfully received auth token"
+
+            Write-Host "Processing File $($index + 1) of $filesCount.."
+            Write-Host "Currently processing file: $($source_file.Name)"
+
+            $devices = $source_file | Import-csv -Delimiter $appsettings.SourceCSVDemiliter
+            $results = New-Object -TypeName "System.Collections.ArrayList"
+            ForEach ($device in $devices) 
+            {
+                $device_info = Get-IAManagedDeviceInfo -MSGraphDeviceManagementEndpoint $appsettings.MSGraphApiIntuneDeviceManagementEndpoint -MSGraphAuthToken $auth_token -MSGraphDeviceId $device."Device ID"
+                if($device_info) 
                 {
-                    Write-Host "Device Id: $($device."Device ID") is not managed by $newOwnerType. Attempting to update the managed owner"
-                    $issuccess = Update-IAManagedOwnerType -MSGraphDeviceManagementEndpoint $appsettings.MSGraphApiIntuneDeviceManagementEndpoint -MSGraphAuthToken $auth_token -MSGraphDeviceId $device."Device ID" -NewOwnerType $newOwnerType
-                    if($issuccess)
+                    $owner_type = $device_info.managedDeviceOwnerType
+                    Write-Host "Managed Owner Type: $($owner_type)"
+                    $result_value = "";
+                    If(-not [string]::Equals($owner_type, $newOwnerType, [System.StringComparison]::InvariantCultureIgnoreCase)) 
                     {
-                        $result_value = "Successfully Updated"
-                        Write-Host "Success.. Device Id: $($device."Device ID") managed owner type is now $newOwnerType"
+                        Write-Host "Device Id: $($device."Device ID") is not managed by $newOwnerType. Attempting to update the managed owner"
+                        $issuccess = Update-IAManagedOwnerType -MSGraphDeviceManagementEndpoint $appsettings.MSGraphApiIntuneDeviceManagementEndpoint -MSGraphAuthToken $auth_token -MSGraphDeviceId $device."Device ID" -NewOwnerType $newOwnerType
+                        if($issuccess)
+                        {
+                            $result_value = "Successfully Updated"
+                            Write-Host "Success.. Device Id: $($device."Device ID") managed owner type is now $newOwnerType"
+                        }
+                        else 
+                        {
+                            $result_value = "Failed Update"
+                            Write-Host "Failed to update..  Device Id: $($device."Device ID") was not updated"
+                            $newOwnerType = $owner_type
+                        }
                     }
                     else 
                     {
-                        $result_value = "Failed Update"
-                        Write-Host "Failed to update..  Device Id: $($device."Device ID") was not updated"
+                        $result_value = "No Action"
+                        Write-Host "Device Id: $($device."Device ID") is managed by $newOwnerType. No actions will be taken"
                     }
                 }
                 else 
                 {
-                    $result_value = "No Action"
-                    Write-Host "Device Id: $($device."Device ID") is managed by $newOwnerType. No actions will be taken"
+                    $result_value = "Failed GET"
+                    Write-Warning "Device Id: $($device."Device ID") not found"
                 }
+                
+                $robj = @{
+                    "Result" = $result_value
+                    "Device ID" = $device."Device ID" 
+                    "Managed Device Owner Type" = $device_info ? ($newOwnerType -eq 'company' ? 'Corporate' : $newOwnerType)  : ""
+                    "Email Address" = $device_info.emailAddress ? $device_info.emailAddress : ""
+                    "User Display Name" = $device_info.userDisplayName ? $device_info.userDisplayName : ""
+                    "Model" = $device_info.model ? $device_info.model : ""
+                    "Manufacturer" = $device_info.manufacturer ? $device_info.manufacturer : ""
+                    "IMEI" = $device_info.imei ? $device_info.imei : ""
+                    "Device name" = $device_info.deviceName ? $device_info.deviceName : ""
+                    "Serial Number" = $device_info.serialNumber ? $device_info.serialNumber : ""
+                    "Phone Number" = $device_info.phoneNumber ? $device_info.phoneNumber : ""
+                    "OS + OS Version" =  $device_info ? "$($device_info.operatingSystem) Version: $($device_info.osVersion)"  : ""
+                }
+
+                $results.Add((New-Object PSObject -Property $robj)) | Out-Null
             }
-            else 
-            {
-                $result_value = "Failed GET"
-                Write-Host "Failed to Get Device Information..  Device Id: $($device."Device ID")"
-            }
-            $robj = @{
-                "Device ID" = $device."Device ID"
-                "Device name" = $device."Device name"
-                "IMEI" = $device.IMEI
-                "Result" = $result_value
-            }
-            $results.Add((New-Object PSObject -Property $robj)) 
+            Write-Host "Exporting Results"
+
+            $resultcsv_filename = "results-$($source_file.BaseName)-$($runid).csv"
+            $result_full_path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath("$($appsettings.ResultFolderPath)$($path_sep)$($resultcsv_filename)")
+            Write-Host "Exporting results to file: $($result_full_path)"
+            $results |
+                Select-Object "Result", "Device ID", "Managed Device Owner Type", "Email Address", "User Display Name", "Model", "Manufacturer", "IMEI", "Device name", "Serial Number", "Phone Number", "OS + OS Version" |
+                Export-Csv -NoTypeInformation -Path $result_full_path -Delimiter $appsettings.SourceCSVDemiliter -UseQuotes AsNeeded -Encoding utf8
+            
+            $archive_filename = "archive-$($source_file.BaseName)-$($runid).$($source_file.Extension)"
+            $archive_full_path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath("$($appsettings.ArchiveFolderPath)$($path_sep)$($archive_filename)")
+            Write-Host "Moving the source file to archive folder. Archive FileName: $archive_full_path"
+            Move-Item -Path $source_file.FullName -Destination $archive_full_path -Force
+
+            $index = $index + 1
         }
-        Write-Host "Exporting Results"
 
-        $resultcsv_filename = "$(Get-Date -Format "yyyyMMdd-HHmmss.ffff").csv"
-        $result_full_path = "$($appsettings.ResultFolderPath)$($path_sep)$($resultcsv_filename)"
-        Write-Host "Exporting results to file: $($result_full_path)"
-        $results | Export-Csv -NoTypeInformation -Path $result_full_path -Delimiter $appsettings.SourceCSVDemiliter -UseQuotes AsNeeded -Encoding utf8
-
-        Write-Host "Done"
+        Write-Host "Done.."
     }
-    catch{
-        Write-Error "Unhandled Exception occured"
-        Write-Error $_.Exception.Message
-        Write-Error "Stack Trace:"
-        Write-Error $_.ScriptStackTrace
-        Write-Error "Error Details:"
-        Write-Error $_.ErrorDetails
-        # $_ | Format-List -Force
+    catch {
+        Write-Host "Inside catch"
+        $msg = $_ | Select-Object -Property ScriptStackTrace -ExpandProperty Exception | Format-List ScriptStackTrace, Message | Out-String
+        Write-Error $msg
     }
+    finally {
+        Stop-Transcript 
+    }
+       
+}
+end {
     
 }

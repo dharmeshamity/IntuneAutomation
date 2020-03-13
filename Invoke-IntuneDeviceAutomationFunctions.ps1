@@ -52,23 +52,34 @@ function Get-IAAuthenticationToken {
         $plainTextPassword = $MSGraphAPICredential.Password | ConvertFrom-SecureString -AsPlainText
 
         # Define body passed in POST method
-        $body = "resource={0}&client_id={1}&grant_type={2}&username={3}&password={4}&scope={5}" -f 
-                [System.Net.WebUtility]::UrlEncode("https://graph.microsoft.com/"), 
-                [System.Net.WebUtility]::UrlEncode($MSGraphClientId),
-                [System.Net.WebUtility]::UrlEncode('password'),
-                [System.Net.WebUtility]::UrlEncode($MSGraphAPICredential.UserName),
-                [System.Net.WebUtility]::UrlEncode($plainTextPassword),
-                [System.Net.WebUtility]::UrlEncode('user_impersonation')
-        
-        $headers = @{
-            'Content-Type' = 'application/x-www-form-urlencoded'
+        $body = @{
+            resource = "https://graph.microsoft.com/"
+            client_id = $MSGraphClientId
+            grant_type = 'password'
+            username = $MSGraphAPICredential.UserName
+            password = $plainTextPassword
+            scope = 'user_impersonation'
         }
         
         # Invoke POST method with constructed body
-        $auth_response = Invoke-RestMethod -Headers $headers -Uri $MSGraphAuthenticationEndpoint -Method POST -Body $body
+        $auth_response = Invoke-RestMethod -ContentType 'application/x-www-form-urlencoded' -Uri $MSGraphAuthenticationEndpoint -Method POST -Form $body -SkipHttpErrorCheck -StatusCodeVariable "responseStatusCode"
+
+        if($responseStatusCode -and ($responseStatusCode -gt 299 -or $responseStatusCode -lt 200))
+        {
+            if($auth_response)
+            {
+                #Write-Error "Error: Authentication Failed with HTTP STATUS CODE: $($responseStatusCode)`n$($auth_response | Out-String)" -ErrorAction Stop -Category AuthenticationError
+                 $expmsg = "Error: Authentication Failed with HTTP STATUS CODE: $($responseStatusCode)`n$($auth_response | Out-String)"
+                 Throw $expmsg
+            }
+            #New-Object -TypeName System.ApplicationException -ArgumentList ([string]"Error: Authentication Failed with HTTP STATUS CODE: $responseStatusCode")
+        }
         
-        # Return authentication hash table
-        return $auth_response.access_token
+        if($auth_response.access_token)
+        {
+            return $auth_response.access_token    
+        }
+        Throw "Error: Token was empty. HTTP STATUS CODE: $responseStatusCode"
     }
 
 }
@@ -92,15 +103,12 @@ function Get-IAManagedDeviceInfo {
             "Authorization" = "Bearer $($MSGraphAuthToken)"
         }
         $endpoint = $MSGraphDeviceManagementEndpoint.Trim().EndsWith("/") ? $MSGraphDeviceManagementEndpoint.Trim().TrimEnd("/") : $MSGraphDeviceManagementEndpoint.Trim()
-        try {
-            $response = Invoke-RestMethod -Headers $headers -Method Get -Uri "$($endpoint)/$($MSGraphDeviceId)"
+        $response = Invoke-RestMethod -Headers $headers -Method Get -Uri "$($endpoint)/$($MSGraphDeviceId)" -StatusCodeVariable "returnStatusCode" -SkipHttpErrorCheck
+
+        if($returnStatusCode -eq 200){
             return $response
         }
-        catch {
-            Write-Error "Unable to Get Device Information for Device ID: $($MSGraphDeviceId). See error details below"
-            Write-Error $_.Exception.Message
-            Write-Error "Error Details:"
-            Write-Error $_.ErrorDetails
+        if($returnStatusCode -eq 404) {
             return $null
         }
     }
