@@ -7,10 +7,7 @@ function Initialize-IAAppSettings {
         $Environment,
         [Parameter(Mandatory)]
         [string]
-        $path_seperator,
-        [Parameter(Mandatory=$false)]
-        [Hashtable]
-        $AppSettingsOverrides
+        $path_seperator
     )
     
     process {
@@ -33,6 +30,49 @@ function Initialize-IAAppSettings {
     
 }
 
+function Get-IAMSGraphAPICredential {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [ValidateSet("DEV", "TEST", "PRODUCTION")]
+        [string]
+        $Environment,
+        [Parameter(Mandatory=$true)]
+        [string]
+        $IntuneAppDataFolderPath,
+        [Parameter(Mandatory = $true)]
+        [bool]
+        $NeedRefresh
+    )
+    
+    process {
+        $credential_file = "$($IntuneAppDataFolderPath)credentials$($path_sep)msgraphapi-credentials.$($Environment).json"
+        If(-not (Test-Path($credential_file)))
+        {
+            Write-Warning "Credentials file not found. Trying to create."
+            New-Item -Path $credential_file -ItemType File -Force -ErrorAction Stop | Out-Null
+            Write-Host "MS Graph API Credential File created"
+        }
+        
+        $credentials = Get-Content $credential_file | ConvertFrom-Json -Depth 100 -AsHashtable
+        if(-not $credentials) {
+            $credentials = @{}
+        }
+        if($NeedRefresh -or $credentials.ContainsKey("credential") -eq $false) {
+            $credentials.Clear()
+            $apiCredentials = Get-Credential -Message "Please provide credentials for MS Graph API"
+            $credentials["credential"] =  @{
+                UserName = $apiCredentials.UserName
+                Password = $apiCredentials.Password | ConvertFrom-SecureString
+            }
+            $credentials | ConvertTo-Json -depth 100 | Set-Content $credential_file
+            Write-Warning "Saved new credentials to $credential_file"
+        }
+        Write-Host "Reading the MS Graph API Credential file"
+        $cred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $credentials["credential"].UserName, ($credentials["credential"].Password | ConvertTo-SecureString)
+        return $cred
+    }
+}
 function Get-IAAuthenticationToken {
     [CmdletBinding()]
     param (
@@ -77,7 +117,7 @@ function Get-IAAuthenticationToken {
         
         if($auth_response.access_token)
         {
-            return $auth_response.access_token    
+            return $auth_response    
         }
         Throw "Error: Token was empty. HTTP STATUS CODE: $responseStatusCode"
     }
