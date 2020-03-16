@@ -6,11 +6,23 @@ This script will take Source CSV file with devices. For each device in the CSV f
 If not, it will update the device to be managed by the comany.
 
 .PARAMETER Environment
-Accepts DEV, TEST, PRODUCTION.  
-.PARAMETER MSGraphAPICredential
-Credential for using with microsoft graph api.
+Accepts DEV, TEST, PRODUCTION. See appsettings.{Environment}.json for the available settings per environment
+.PARAMETER RefreshCredentials
+Switch Parameter. Provide this switch when you need to update MS Graph API credential. This will force refresh of the credential. 
+If the credential is not found, the script will ask for credential on the first run. 
+The credential is stored at Per Computer, Per User level. 
+.PARAMETER newOwnerType 
+Default is 'company'. But if you need to set the devices to Personal, provide 'personal'. Accepted values 'company' and 'personal'
 .EXAMPLE
-kwejwe
+.\Invoke-IntuneDeviceAutomation -Environment PRODUCTION
+Running this for Production environment. The settings will be read from appsettings.PRODUCTION.json
+.EXAMPLE
+.\Invoke-IntuneDeviceAutomation -Environment PRODUCTION -RefreshCredentials
+Running this for Production environment. The settings will be read from appsettings.PRODUCTION.json. 
+Forces the refresh of the MS Graph API User Credential.
+.EXAMPLE
+.\Invoke-IntuneDeviceAutomation -Environment PRODUCTION -newOwnerType 'company'
+Explicitly providing the owner type to be set on the device.
 #>
 [CmdletBinding()]
 param (
