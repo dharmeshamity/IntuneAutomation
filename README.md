@@ -15,6 +15,8 @@
 3. **Unblock powershell scripts:** cd into the directory where you extracted the code. Run Following command: <pre>Get-Item -Path *.ps1 | Unblock-File</pre>
 4. Type command: <pre>Get-ExecutionPolicy</pre> Check the output. If this command output *Restricted* or *AllSigned*, you will need to follow instructions to set the execution policy to *RemoteSigned* or *UnRestricted*. Reach out to me if you need help. Instructions: https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-7
 5. **Custom Configuratioon:** In Notepad or json or Text Editor or your choice open: appsettings.PRODUCTION.json file. Update the configuration according to you liking.
+
+*I would suggest the SourceFolderPath, ArchiveFolderPath and ResultFolderPath be different for different Environments, so that mistakenly you don't run wrong file on wrong Environment.*
 <pre><code>
 {
     "SourceFolderPath": {Pathto folder where you will drop data files},
